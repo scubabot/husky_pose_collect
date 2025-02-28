@@ -65,7 +65,8 @@ rostopic pub /caleb_pose_topic geometry_msgs/PoseStamped "{header: {stamp: now, 
 ```
 - This command publishes dummy pose data at a rate of one message per second, allowing you to verify that your node records the data correctly.  
 
-
+### Testing wireless interface
+- Use the dummy_publisher.py file to test the network and see if the wireless connection between nodes is working. 
 
 
 
