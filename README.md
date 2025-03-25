@@ -53,7 +53,7 @@ rosrun husky_pose_recorder pose_recorder.py
 3. Optional Arguments:
     - You can adjust sampling and enable live plotting via launch parameters:
 ```bash
-rosrun husky_pose_recorder pose_recorder.py _sampling_rate:=30 _plot_live:=true
+rosrun husky_pose_collect pose_recorder.py _sampling_rate:=30 _plot_live:=true
 ```
 
 ### How it Works
