@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>husky_pose_recorder</name>
+  <name>husky_pose_collect</name>
   <version>0.0.0</version>
   <description>The husky_pose_recorder package</description>
 

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.0.2)
-project(husky_pose_recorder)
+project(husky_pose_collect)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 # add_compile_options(-std=c++11)

@@ -1,80 +1,254 @@
 #!/usr/bin/env python3
-# This ROS node subscribes to a pose topic and saves position and orientation data to a text file.
+import rospy
+import os
+import math
+import glob
+import threading
+import time
 
-import rospy                       # Import the rospy library to interact with ROS.
-from geometry_msgs.msg import PoseStamped   # Import the PoseStamped message type.
-import tf                        # Import the tf package for converting quaternions to Euler angles.
-import os                        # Import the os module for file path operations.
+from geometry_msgs.msg import PoseStamped
+import tf  # For quaternion -> euler
+import matplotlib.pyplot as plt  # For optional live plotting
 
-# Define the output file path; the file will be saved in the current working directory.
-OUTPUT_FILE = os.path.join(os.getcwd(), "pose_data.txt")
+########################################
+# 1) SETUP YOUR LOG DIRECTORY & FILE
+########################################
+
+def get_next_log_filename(log_dir="pose_logs"):
+    """
+    Ensures logs go into an auto-numbered text file, like:
+      pose_logs/pose_001.txt, pose_002.txt, ...
+    Returns the full path to the next available file.
+    """
+    # Create the logs directory if it doesn't exist
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+
+    # Count how many pose_XXX.txt files already exist
+    existing_logs = glob.glob(os.path.join(log_dir, "pose_*.txt"))
+    # We'll generate a new index (1-based)
+    new_index = len(existing_logs) + 1
+
+    # Format it like: pose_001.txt, pose_002.txt, ...
+    filename = f"pose_{new_index:03d}.txt"
+    full_path = os.path.join(log_dir, filename)
+    return full_path
+
+########################################
+# 2) CONVERT QUATERNION -> YAW
+########################################
 
 def quaternion_to_yaw(orientation_q):
     """
-    Convert a quaternion (orientation) into a yaw angle.
-    :param orientation_q: A quaternion with fields x, y, z, w.
-    :return: The yaw (rotation about the Z-axis) in radians.
+    Convert a quaternion (orientation) into a yaw angle in radians.
     """
-    # Create a tuple from the quaternion components.
     quaternion = (
         orientation_q.x,
         orientation_q.y,
         orientation_q.z,
         orientation_q.w
     )
-    # Convert the quaternion into Euler angles (roll, pitch, yaw) using tf.
+    # This returns (roll, pitch, yaw)
     euler = tf.transformations.euler_from_quaternion(quaternion)
-    # Return the yaw angle (third element in the Euler tuple).
     return euler[2]
 
+########################################
+# 3) GLOBALS FOR LOGGING & PLOTTING
+########################################
+
+LOG_FILE = None         # Path to the output file
+start_time = None       # Time we started logging
+last_report_time = None # For summary stats once per second
+poses_logged = 0        # Total lines logged
+
+# We'll store the latest pose in these globals
+latest_pose = None
+latest_pose_received = False
+
+# We'll keep track of the last logged pose to detect movement
+last_logged_x = None
+last_logged_y = None
+last_logged_yaw = None
+
+# Thresholds for "significant" motion
+DIST_THRESHOLD = 0.05   # 5 cm
+YAW_THRESHOLD  = math.radians(5.0)  # 5 degrees
+
+# For optional live plotting
+plot_live = False
+plot_data = {
+    'x': [],
+    'y': []
+}
+plot_thread = None
+plot_shutdown = False
+plot_fig = None
+plot_ax = None
+
+########################################
+# 4) SUBSCRIBER CALLBACK: STORE POSE
+########################################
+
 def pose_callback(msg):
-    """
-    Callback function that processes each incoming PoseStamped message.
-    It extracts the position (x, y, z), computes the yaw angle (theta),
-    and writes these values along with a timestamp to a text file.
-    
-    :param msg: The PoseStamped message received from the topic.
-    """
-    # Extract the x, y, z coordinates from the position part of the message.
+    global latest_pose, latest_pose_received
+
+    # Simply store the latest pose, do not log here.
+    latest_pose = msg
+    latest_pose_received = True
+
+########################################
+# 5) TIMER CALLBACK: LOG POSE
+########################################
+
+def timer_callback(event):
+    global start_time, last_report_time, poses_logged
+    global last_logged_x, last_logged_y, last_logged_yaw
+    global latest_pose_received, latest_pose
+    global plot_data
+
+    now = rospy.Time.now().to_sec()
+
+    # If we haven't started the timer or last_report_time, do it now
+    if start_time is None:
+        start_time = now
+        last_report_time = now
+
+    # We only log if we've received at least one pose
+    if not latest_pose_received or latest_pose is None:
+        return
+
+    # Grab the latest pose data safely
+    msg = latest_pose
     x = msg.pose.position.x
     y = msg.pose.position.y
     z = msg.pose.position.z
-    
-    # Convert the orientation quaternion to a yaw angle (theta).
-    theta = quaternion_to_yaw(msg.pose.orientation)
-    
-    # Get the time stamp from the message header.
-    # If the header stamp is not available, use the current ROS time.
-    time_stamp = msg.header.stamp.to_sec() if msg.header.stamp else rospy.get_time()
-    
-    # Format the data as a comma-separated line: time, x, y, z, theta.
-    data_line = "{:.3f},{:.4f},{:.4f},{:.4f},{:.4f}\n".format(time_stamp, x, y, z, theta)
-    
-    # Open the output file in append mode and write the data line.
-    with open(OUTPUT_FILE, "a") as f:
-        f.write(data_line)
-    
-    # Log the recorded data to the ROS console for debugging.
-    rospy.loginfo("Recorded pose: " + data_line.strip())
+    yaw = quaternion_to_yaw(msg.pose.orientation)
 
-def listener():
+    # Time stamp from message
+    time_stamp = msg.header.stamp.to_sec()
+    if time_stamp == 0.0:
+        time_stamp = now
+
+    # Write data line to file
+    data_line = "{:.3f},{:.4f},{:.4f},{:.4f},{:.4f}\n".format(time_stamp, x, y, z, yaw)
+    with open(LOG_FILE, "a") as f:
+        f.write(data_line)
+
+    # Update count
+    poses_logged += 1
+
+    # Movement detection compared to last logged
+    if last_logged_x is not None and last_logged_y is not None and last_logged_yaw is not None:
+        dist = math.sqrt((x - last_logged_x)**2 + (y - last_logged_y)**2)
+        dyaw = abs(yaw - last_logged_yaw)
+        if dyaw > math.pi:
+            dyaw = 2*math.pi - dyaw
+
+        if dist >= DIST_THRESHOLD or dyaw >= YAW_THRESHOLD:
+            rospy.loginfo(f"ΔPos = {dist:.3f}m | ΔYaw = {math.degrees(dyaw):.1f}° — pose recorded.")
+
+    # Update "last logged" values
+    last_logged_x = x
+    last_logged_y = y
+    last_logged_yaw = yaw
+
+    # For live plotting
+    if plot_live:
+        plot_data['x'].append(x)
+        plot_data['y'].append(y)
+
+    # Print summary stats once per second
+    if (now - last_report_time) >= 1.0:
+        elapsed = now - start_time
+        rate = poses_logged / elapsed if elapsed > 0 else 0
+        rospy.loginfo(f"Logged {poses_logged} poses | Elapsed: {elapsed:.2f}s | Avg rate: {rate:.1f} Hz")
+        last_report_time = now
+
+########################################
+# 6) LIVE PLOTTING THREAD (OPTIONAL)
+########################################
+
+def live_plot_thread():
     """
-    Initializes the ROS node, subscribes to the pose topic, and keeps the node running.
+    Runs in a separate thread if plot_live==True.
+    Updates the plot every ~0.5 seconds.
     """
-    # Initialize the node with the name 'pose_recorder'. The 'anonymous=True'
-    # option allows multiple nodes with the same name to run without conflict.
+    global plot_fig, plot_ax
+    plt.ion()
+    plot_fig, plot_ax = plt.subplots()
+    line, = plot_ax.plot([], [], 'o-')  # A simple 2D trace line
+
+    while not plot_shutdown and not rospy.is_shutdown():
+        # Copy data for thread safety
+        x_vals = plot_data['x'][:]
+        y_vals = plot_data['y'][:]
+
+        if x_vals and y_vals:
+            line.set_xdata(x_vals)
+            line.set_ydata(y_vals)
+            plot_ax.relim()
+            plot_ax.autoscale_view()
+        plt.draw()
+        plt.pause(0.1)
+        time.sleep(0.4)  # ~0.5 sec total loop time
+
+    # Save final plot before closing
+    if plot_fig:
+        image_filename = LOG_FILE.replace(".txt", "_plot.png")
+        plot_fig.savefig(image_filename)
+        rospy.loginfo(f"Saved final plot to {image_filename}")
+
+    plt.ioff()
+    plt.close(plot_fig)
+
+########################################
+# 7) MAIN ROS SETUP
+########################################
+
+def main():
+    global LOG_FILE, plot_live, plot_thread
+
     rospy.init_node('pose_recorder', anonymous=True)
-    
-    # Subscribe to the topic that publishes PoseStamped messages.
-    # Replace "caleb_pose_topic" with the actual topic name used by Caleb's node.
-    rospy.Subscriber("caleb_pose_topic", PoseStamped, pose_callback)
-    
-    # Inform the user that the node has started and where the data will be saved.
-    rospy.loginfo("Pose recorder node started. Writing data to: " + OUTPUT_FILE)
-    
-    # Keep the node active, waiting for incoming messages.
+
+    # 7a) Check ROS_MASTER_URI
+    ros_master_uri = os.getenv('ROS_MASTER_URI', 'Not set')
+    rospy.loginfo(f"ROS_MASTER_URI is: {ros_master_uri}")
+
+    # 7b) Create next log file
+    LOG_FILE = get_next_log_filename("pose_logs")
+    rospy.loginfo(f"Logging pose data to: {LOG_FILE}")
+
+    # 7c) Read optional params
+    #     e.g. rosrun your_pkg pose_recorder.py _plot_live:=true _sampling_rate:=30
+
+    global plot_live
+    plot_live = rospy.get_param('~plot_live', False)
+    sampling_rate = rospy.get_param('~sampling_rate', 60.0)  # Default 60 Hz
+
+    if plot_live:
+        rospy.loginfo("Live plotting is ENABLED. A matplotlib window will open.")
+
+    # 7d) Subscribe to the pose topic
+    rospy.Subscriber("/natnet_ros/Husky/pose", PoseStamped, pose_callback)
+
+    # 7e) Start a Timer to log at 'sampling_rate' (Hz)
+    rospy.Timer(rospy.Duration(1.0 / sampling_rate), timer_callback)
+
+    # 7f) If live plotting, start thread
+    if plot_live:
+        global plot_thread
+        plot_thread = threading.Thread(target=live_plot_thread)
+        plot_thread.start()
+
+    # 7g) Spin to keep script running
     rospy.spin()
 
+    # Once rospy.spin() exits, we should cleanly shut down the plot
+    if plot_live:
+        global plot_shutdown
+        plot_shutdown = True
+        plot_thread.join()
+
 if __name__ == '__main__':
-    # When this script is executed, start the listener function.
-    listener()
+    main()
+
