@@ -14,25 +14,20 @@ import matplotlib.pyplot as plt  # For optional live plotting
 # 1) SETUP YOUR LOG DIRECTORY & FILE
 ########################################
 
-def get_next_log_filename(log_dir="pose_logs"):
+def get_next_log_filename():
     """
-    Ensures logs go into an auto-numbered text file, like:
-      pose_logs/pose_001.txt, pose_002.txt, ...
-    Returns the full path to the next available file.
+    Returns the next available auto-numbered filename in the default pose_logs directory.
+    Default path: ~/catkin_ws/src/pose_logs
     """
-    # Create the logs directory if it doesn't exist
+    log_dir = os.path.expanduser("~/catkin_ws/src/pose_logs")
+
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
 
-    # Count how many pose_XXX.txt files already exist
     existing_logs = glob.glob(os.path.join(log_dir, "pose_*.txt"))
-    # We'll generate a new index (1-based)
     new_index = len(existing_logs) + 1
-
-    # Format it like: pose_001.txt, pose_002.txt, ...
     filename = f"pose_{new_index:03d}.txt"
-    full_path = os.path.join(log_dir, filename)
-    return full_path
+    return os.path.join(log_dir, filename)
 
 ########################################
 # 2) CONVERT QUATERNION -> YAW
@@ -215,7 +210,7 @@ def main():
     rospy.loginfo(f"ROS_MASTER_URI is: {ros_master_uri}")
 
     # 7b) Create next log file
-    LOG_FILE = get_next_log_filename("pose_logs")
+    LOG_FILE = get_next_log_filename()
     rospy.loginfo(f"Logging pose data to: {LOG_FILE}")
 
     # 7c) Read optional params
