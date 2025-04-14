@@ -224,7 +224,7 @@ def main():
         rospy.loginfo("Live plotting is ENABLED. A matplotlib window will open.")
 
     # 7d) Subscribe to the pose topic
-    rospy.Subscriber("/natnet_ros/Husky/pose", PoseStamped, pose_callback)
+    rospy.Subscriber("/natnet_ros/base_link/pose", PoseStamped, pose_callback)
 
     # 7e) Start a Timer to log at 'sampling_rate' (Hz)
     rospy.Timer(rospy.Duration(1.0 / sampling_rate), timer_callback)

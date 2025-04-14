@@ -1,47 +1,9 @@
 ## README
 
-### Overview
-
-This code records position data from an OptiTrack camera system. Although it was developed for a Clearpath HUSKY A200, it is not specific to that platform and can be adapted for any system that publishes pose data in a similar format. 
-
-### Dependencies
-
-- ROS Noetic (with Python3)
-- ROS Packages: `rospy`, `geometry_msgs`, `tf`, `matplotlib`
-
-Make sure to install these and that your ROS workspace is properly set up.
-
-```bash
-sudo apt install ros-noetic-tf python3-matplotlib
-```
-
-### Setup
-
-1. Create a Catkin Workspace:
-    If you have not yet, create and initialize your workspace:
-```bash
-mkdir -p ~/catkin_ws/src
-cd ~/catkin_ws/src
-catkin_init_workspace
-```
-
-2. Create/Place the Package:
-    - Place your package (e.g., `husky_pose_rec`) in the `~/catkin_ws/src` folder.
-    - Ensure the package has a valid `package.xml` and `CMakeLists.txt`.
-
-3. Build the Workspace:
-   - From the workspace root:
-
-```bash
-cd ~/catkin_ws
-catkin_make
-source devel/setup.bash
-```
-
 ### Usage
 
 1. Modify the Topic Name:
-    - In the code, replace `/natnet_ros/Husky/pose` with your actual topic name that publishes pose data.
+    - In the code, replace `/natnet_ros/base_link/pose` with your actual topic name that publishes pose data.
 
 2. Run the Node:
     - From the terminal run:
